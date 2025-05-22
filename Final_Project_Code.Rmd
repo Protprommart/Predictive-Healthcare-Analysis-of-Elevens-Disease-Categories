@@ -1,0 +1,637 @@
+---
+title: "Final_Project_Code"
+output: html_document
+---
+
+# Import Data and Libraries
+
+```{r}
+library(readxl)  
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(quantmod) 
+library(tseries)
+library(xts)
+
+library(stringr)
+library(tidyr)
+library(mice)
+library(vars)
+library(lmtest)
+library(Metrics)
+library(strucchange)
+
+library(tseries)
+library(plm)
+```
+
+```{r}
+data = read.csv("GlobalHealthStatistics.csv")
+```
+
+# Exploratory Data Analysis
+
+```{r}
+head(data)
+```
+
+```{r}
+#convert column to factor
+convert_factor <- function(data, colname){
+  data[[colname]] = factor(data[[colname]])
+}
+
+convert_factor(data, 'Country')
+convert_factor(data, 'Disease.Name')
+convert_factor(data, 'Disease.Category')
+convert_factor(data, 'Age.Group')
+convert_factor(data, 'Gender')
+convert_factor(data, 'Treatment.Type')
+convert_factor(data, 'Availability.of.Vaccines.Treatment')
+```
+
+```{r}
+table(data$Country)
+table(data$Disease.Name)
+table(data$Disease.Category)
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+data = as.data.frame(data)
+colnames(data)
+```
+
+```{r}
+#change columns name
+colnames(data) <- c('Country', 'Year', 'Disease_Name','Disease_Category','Prevalence_Rate','Incidence_Rate',
+                    'Mortality_Rate','Age_Group','Gender','Population_Affected','Healthcare_Access',
+                    'Doctors_per_1000','Hospital_Beds_per_1000','Treatment_Type', 'Average_Treatment_Cost',
+                    'Availability_of_Vaccines_Treatment','Recovery_Rate', 'DALYs', 'Improvement_in_5_Years',
+                    'Per_Capita_Income', 'Education_Index', 'Urbanization_Rate')
+```
+
+
+## Americans' mortality rate
+
+```{r}
+dis_cat_USA = data %>% filter(Country == 'USA') %>% group_by(Disease_Category, Year) %>% summarise(mean_mortality = mean(Mortality_Rate, na.rm = TRUE))
+```
+
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/usa_mortality.png', width = 960, height = 600)
+dis_cat_USA %>%
+  ggplot(aes(x = Year, y = mean_mortality)) +
+  geom_line()+
+  geom_point()+
+   facet_wrap(~ Disease_Category, scales = "free_y")+
+  labs(title = paste("Mean Mortality Rate of 11 Disease Categories in United States"),y = "Mean Mortality Rate")
+```
+
+
+
+## International Mortality Rate
+
+```{r}
+dis_cat_inter = data %>% group_by(Disease_Category, Year, Country) %>% summarise(mean_mortality = mean(Mortality_Rate, na.rm = TRUE))
+```
+
+```{r}
+plot_international <- function(disease){
+  dis_cat_inter %>%
+  filter(Disease_Category == disease) %>%
+  ggplot(aes(x = Year, y = mean_mortality)) +
+  geom_line()+
+  geom_point()+
+   facet_wrap(~ Country, scales = "free_y")+
+  labs(title = paste("Mean Mortality Rate by", disease ,"Category in 20 countries"),
+       y = "Mean Mortality Rate")
+}
+```
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_cardiovascular.png', width = 960, height = 600)
+plot_international('Cardiovascular')
+
+```
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_autoimmune.png', width = 960, height = 600)
+plot_international('Autoimmune')
+```
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_bacterial.png', width = 960, height = 600)
+plot_international('Bacterial')
+```
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_chronic.png', width = 960, height = 600)
+plot_international('Chronic')
+```
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_genetic.png', width = 960, height = 600)
+plot_international('Genetic')
+```
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_infectious.png', width = 960, height = 600)
+plot_international('Infectious')
+```
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_metabolic.png', width = 960, height = 600)
+plot_international('Metabolic')
+```
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_neurological.png', width = 960, height = 600)
+plot_international('Neurological')
+```
+
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_parasitic.png', width = 960, height = 600)
+plot_international('Parasitic')
+```
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_respiratory.png', width = 960, height = 600)
+plot_international('Respiratory')
+```
+```{r}
+png('C:/Users/Waree/CSCIE-116_DynamicModeling-ForecastinBigData/Final Project/internation_viral.png', width = 960, height = 600)
+plot_international('Viral')
+```
+
+
+
+# Model
+
+## ARIMA
+
+### convert to timeseries and test stationary
+
+```{r}
+convert_to_ts <- function(disease,df){
+  new_df = df%>% filter(Disease_Category == disease)
+  new_df = ts(new_df$mean_mortality, start = (2000))
+  new_df = diff(new_df)
+  return(new_df)
+}
+```
+
+```{r}
+US_autoimmune = convert_to_ts('Autoimmune',dis_cat_USA)
+```
+```{r}
+ggtsdisplay(US_autoimmune,lag=24)
+adf.test(US_autoimmune)
+
+```
+```{r}
+US_bacterial = convert_to_ts('Bacterial',dis_cat_USA)
+```
+```{r}
+ggtsdisplay(US_bacterial,lag=24)
+adf.test(US_bacterial)
+```
+```{r}
+US_cardio = convert_to_ts('Cardiovascular',dis_cat_USA)
+ggtsdisplay(US_cardio,lag=24)
+adf.test(US_cardio)
+```
+```{r}
+US_chronic = convert_to_ts('Chronic',dis_cat_USA)
+US_chronic = diff(US_chronic, lag = 3)
+ggtsdisplay(US_chronic,lag=24)
+adf.test(US_chronic)
+```
+```{r}
+US_genetic = convert_to_ts('Genetic',dis_cat_USA)
+ggtsdisplay(US_genetic,lag=24)
+adf.test(US_genetic)
+```
+```{r}
+#Infectious
+US_infectious = convert_to_ts('Infectious',dis_cat_USA)
+US_infectious = diff(US_infectious)
+ggtsdisplay(US_infectious,lag=24)
+adf.test(US_infectious)
+```
+```{r}
+#Metabolic   
+US_metabolic = convert_to_ts('Metabolic',dis_cat_USA)
+ggtsdisplay(US_metabolic,lag=24)
+adf.test(US_metabolic)
+```
+```{r}
+#Neurological      
+US_neurological = convert_to_ts('Neurological',dis_cat_USA)
+ggtsdisplay(US_neurological,lag=24)
+adf.test(US_neurological)
+```
+```{r}
+#Parasitic    
+US_parasitic = convert_to_ts('Parasitic',dis_cat_USA)
+ggtsdisplay(US_parasitic,lag=24)
+adf.test(US_parasitic)
+```
+```{r}
+#Respiratory    
+US_respiratory = convert_to_ts('Respiratory',dis_cat_USA)
+US_respiratory = diff(US_respiratory, lag=3)
+ggtsdisplay(US_respiratory,lag=24)
+adf.test(US_respiratory)
+```
+```{r}
+#viral
+US_viral = convert_to_ts('Viral',dis_cat_USA)
+ggtsdisplay(US_viral,lag=24)
+adf.test(US_viral)
+```
+### train-test 
+
+```{r}
+US_autoimmune_train = ts(US_autoimmune, start = (2001), end = (2021))
+US_bacterial_train = ts(US_bacterial, start = (2001), end = (2021))
+US_cardio_train = ts(US_cardio, start = (2001), end = (2021))
+US_chronic_train = ts(US_chronic, start = (2004), end = (2021))
+US_genetic_train = ts(US_genetic, start = (2001), end = (2021))
+US_infectious_train = ts(US_infectious, start = (2002), end = (2021))
+US_metabolic_train = ts(US_metabolic, start = (2001), end = (2021))
+US_neurological_train = ts(US_neurological, start = (2001), end = (2021))
+US_parasitic_train = ts(US_parasitic, start = (2001), end = (2021))
+US_respiratory_train = ts(US_respiratory, start = (2004), end = (2021))
+US_viral_train = ts(US_viral, start = (2001), end = (2021))
+```
+
+```{r}
+US_autoimmune_test = ts(US_autoimmune, start = (2022), end = (2024))
+US_bacterial_test = ts(US_bacterial, start = (2022), end = (2024))
+US_cardio_test = ts(US_cardio, start = (2022), end = (2024))
+US_chronic_test = ts(US_chronic, start = (2022), end = (2024))
+US_genetic_test = ts(US_genetic, start = (2022), end = (2024))
+US_infectious_test = ts(US_infectious, start = (2022), end = (2024))
+US_metabolic_test = ts(US_metabolic, start = (2022), end = (2024))
+US_neurological_test = ts(US_neurological, start = (2022), end = (2024))
+US_parasitic_test = ts(US_parasitic, start = (2022), end = (2024))
+US_respiratory_test = ts(US_respiratory, start = (2022), end = (2024))
+US_viral_test = ts(US_viral, start = (2022), end = (2024))
+```
+
+```{r}
+US_list <- list(US_autoimmune_train, US_bacterial_train, US_cardio_train, US_chronic_train, US_genetic_train, US_infectious_train, US_metabolic_train, US_neurological_train, US_parasitic_train, US_respiratory_train, US_viral_train)
+
+US_forecast <- list(US_autoimmune_forecast='', US_bacterial_forecast='', US_cardio_forecast='', US_chronic_forecast='', US_genetic_forecast='', US_infectious_forecast='', US_metabolic_forecast='', US_neurological_forecast='', US_parasitic_forecast='', US_respiratory_forecast='', US_viral_forecast='')
+```
+
+
+```{r}
+predict_arima <- function(trainmodel){
+  arima_model <- auto.arima(trainmodel, seasonal = FALSE)
+  summary <- summary(arima_model)
+  print(summary)
+  ARMA_forecast <- forecast(arima_model, h=3)
+  ARMA_forecast <- ARMA_forecast$mean
+  print(ARMA_forecast)
+  ARMA_forecast_ts <- ts(ARMA_forecast, start = 2022, end = 2024)
+  print('----------------------------------------------------------------------')
+  return(ARMA_forecast_ts)
+}
+```
+
+```{r}
+for (i in seq_along(US_list)) {
+  US_forecast[[i]] <- predict_arima(US_list[[i]])
+}
+```
+
+
+```{r}
+US_rmse = list(US_autoimmune_rmse='', US_bacterial_rmse='', US_cardio_rmse='', US_chronic_rmse='', US_genetic_rmse='', US_infectious_rmse='', US_metabolic_rmse='', US_neurological_rmse='', US_parasitic_rmse='', US_respiratory_rmse='', US_viral_rmse='')
+
+US_test <- list(US_autoimmune_test , US_bacterial_test , US_cardio_test , US_chronic_test , US_genetic_test , US_infectious_test , US_metabolic_test , US_neurological_test , US_parasitic_test , US_respiratory_test , US_viral_test)
+```
+
+```{r}
+
+for (i in seq_along(US_forecast)) {
+  US_rmse[[i]] <- rmse(US_test[[i]],US_forecast[[i]])
+}
+
+```
+
+
+```{r}
+US_forecast
+```
+
+
+```{r}
+plot(US_forecast$US_autoimmune_forecast, xlab="Time", ylab= "Mean Mortality Rate", col="red", main="Forecast vs Actual for Autoimmune Diseases")
+lines(US_autoimmune_test)
+legend("topright",
+       legend = c("Forecast", "Actual"),
+       col = c("red", "black"),
+       lty = 1,
+       lwd = 2)
+```
+```{r}
+Disease <- list('Autoimmune' , 'Bacterial' , 'Cardio' , 'Chronic' , 'Genetic' , 'Infectious' , 'Metabolic' , 'Neurological' , 'Parasitic' , 'Respiratory' , 'Viral')
+```
+
+
+```{r}
+png_filename <- paste0('C:/Users/Waree/Downloads/forecast.png')
+png(png_filename, width = 960, height = 600)
+par(mfrow = c(4, 3))
+
+for (i in seq_along(US_forecast)) {
+  plot(US_forecast[[i]],
+       xlab = "Time",
+       ylab = "Mean Mortality Rate",
+       col = "red",
+       ylim = range(c(US_forecast[[i]], US_test[[i]])),
+       main = paste("Forecast vs Actual for", Disease[[i]]))
+  
+  lines(US_test[[i]], col = "black")
+  legend("topright", legend = c("Forecast", "Actual"), col = c("red", "black"), lty = 1, lwd = 2)
+}
+dev.off()  # IMPORTANT: close the PNG device after each plot
+```
+
+
+```{r}
+US_rmse
+```
+
+
+
+## PCA
+
+### Dummy model
+
+```{r}
+dummy_df <- model.matrix(~ . - 1, data = data)
+```
+
+### correlation matrix
+
+```{r}
+cor_matrix <- cor(dummy_df)
+```
+
+```{r}
+library(corrplot)
+numeric_df <- data[sapply(data, is.numeric)]
+num_cor <- cor(numeric_df)
+corrplot(num_cor, method="color")
+```
+
+```{r}
+#install.packages("car")
+library(car)
+vif_values <- vif(numeric_df)
+print(vif_values)
+```
+```{r}
+dummy_no_year = subset(dummy_df, select = -Year)
+pca = prcomp(dummy_no_year, scale=TRUE) #Principal Component Analysis
+summary(pca)
+```
+
+
+
+## Dynamic Panel Data Model
+
+
+```{r}
+dis_cat_inter = data %>% group_by(Disease_Category, Year, Country) %>% summarise(mean_mortality = mean(Mortality_Rate, na.rm = TRUE),
+                                                                                 mean_prevalence = mean(Prevalence_Rate, na.rm = TRUE),
+                                                                                 mean_incidence = mean(Incidence_Rate, na.rm = TRUE),
+                                                                                 sum_pop_aff = sum(Population_Affected, na.rm = TRUE),
+                                                                                 mean_healthcare = mean(Healthcare_Access, na.rm = TRUE),
+                                                                                 mean_doc_per1000 = mean(Doctors_per_1000, na.rm = TRUE),
+                                                                                 mean_hos_per1000 = mean(Hospital_Beds_per_1000, na.rm = TRUE),
+                                                                                 mean_treatment_cost = mean(Average_Treatment_Cost, na.rm = TRUE),
+                                                                                 mean_recovery = mean(Recovery_Rate, na.rm = TRUE),
+                                                                                 mean_DALYs = mean(DALYs, na.rm = TRUE),
+                                                                                 mean_imp_5_yrs = mean(Improvement_in_5_Years, na.rm = TRUE),
+                                                                                 mean_income = mean(Per_Capita_Income, na.rm = TRUE),
+                                                                                 mean_edu = mean(Education_Index, na.rm = TRUE),
+                                                                                 mean_urban = mean(Urbanization_Rate, na.rm = TRUE))
+```
+```{r}
+dis_cat_inter_train <- dis_cat_inter %>% filter(Year >= 2001 & Year <= 2017)
+head(dis_cat_inter_train)
+```
+
+```{r}
+dis_cat_inter_test <- dis_cat_inter %>% filter(Year >= 2018)
+head(dis_cat_inter_test)
+```
+
+
+```{r}
+#convert to panel format
+inter_train.p = pdata.frame(dis_cat_inter_train, index = c("Country", "Disease_Category", "Year"))
+```
+```{r}
+# Augmented Dickey-Fuller test
+adf.test(inter_train.p$mean_mortality, k=2) 
+```
+```{r}
+#random: within and between
+
+rd_model <- plm(mean_mortality ~ lag(mean_mortality) + mean_prevalence + mean_income + mean_incidence + mean_healthcare+mean_doc_per1000+mean_treatment_cost + mean_hos_per1000 + mean_treatment_cost + mean_recovery + mean_DALYs + mean_imp_5_yrs + mean_urban, data = inter_train.p, model = "random")
+summary(rd_model)
+                                                        
+```
+
+```{r}
+#between
+
+btw_model <- plm(mean_mortality ~ lag(mean_mortality) + mean_prevalence + mean_income + mean_incidence + mean_healthcare+mean_doc_per1000+mean_treatment_cost + mean_hos_per1000 + mean_treatment_cost + mean_recovery + mean_DALYs + mean_imp_5_yrs + mean_urban, data = inter_train.p, model = "between")
+summary(btw_model)
+
+```
+
+
+```{r}
+#within
+fe_model <- plm(mean_mortality ~ lag(mean_mortality) + mean_prevalence + mean_income + mean_incidence + mean_healthcare+mean_doc_per1000+mean_treatment_cost + mean_hos_per1000 + mean_treatment_cost + mean_recovery + mean_DALYs + mean_imp_5_yrs + mean_urban, data = inter_train.p, model = "within")
+summary(fe_model)
+
+
+```
+
+
+
+## Out of sample test
+
+```{r}
+#convert to panel format
+inter_test.p = pdata.frame(dis_cat_inter_test, index = c("Country", "Disease_Category", "Year"))
+```
+```{r}
+#predict
+rd_predict = predict(rd_model, newdata = inter_test.p, na.fill = TRUE)
+btw_predict = predict(btw_model, newdata = inter_test.p, na.fill = TRUE)
+fe_predict = predict(fe_model, newdata = inter_test.p, na.fill = TRUE)
+```
+
+
+```{r}
+#rmse
+rmse_rd <- rmse(inter_test.p$mean_mortality, rd_predict)
+rmse_btw <- rmse(inter_test.p$mean_mortality, btw_predict)
+rmse_fe <- rmse(inter_test.p$mean_mortality, fe_predict)
+
+cat("RMSE - Random Effects: ", rmse_rd, "\n")
+cat("RMSE - Between Effects: ", rmse_btw, "\n")
+cat("RMSE - Fixed Effects: ", rmse_fe, "\n")
+```
+
+```{r}
+convert_to_df <- function(data){
+  data_results <- data.frame(data)
+  data_results <- data_results %>%tibble::rownames_to_column(var = "key") %>% 
+    separate(key, into = c("Year", "Country", "Disease_Category"), sep = "-", convert = TRUE)
+  return(data_results)
+  
+}
+```
+
+```{r}
+rd_results = convert_to_df(rd_predict)
+btw_results = convert_to_df(btw_predict)
+```
+
+```{r}
+fe_df <- data.frame(
+  value = as.numeric(fe_predict),
+  key = names(fe_predict)
+)
+```
+
+```{r}
+fe_results <- fe_df %>%
+  separate(key, into = c("Year", "Country", "Disease_Category"), sep = "-", extra = "merge") %>%
+  mutate(Year = as.numeric(Year))
+```
+
+
+### Japan
+
+```{r}
+rd_Japan = rd_results %>% filter(Country == 'Japan')
+btw_Japan = btw_results %>% filter(Country == 'Japan')
+fe_Japan = fe_results %>% filter(Country == 'Japan')
+inter_Japan = inter_test.p %>% filter(Country == 'Japan')
+```
+
+```{r}
+inter_Japan = subset(inter_Japan, select=c(Country,Disease_Category,Year,mean_mortality)) 
+```
+
+```{r}
+type_consistent <- function(df){
+  df %>% mutate(
+    Year = as.numeric(as.character(Year)),
+    Disease_Category = as.character(Disease_Category),
+    Country = as.character(Country)
+  )
+}
+
+```
+
+```{r}
+rd_Japan = type_consistent(rd_Japan)
+btw_Japan = type_consistent(btw_Japan)
+fe_Japan = type_consistent(fe_Japan)
+inter_Japan_new = type_consistent(inter_Japan)
+inter_Japan_new = data.frame(inter_Japan_new)
+```
+
+```{r}
+inter_Japan_new
+```
+
+
+```{r}
+library(tidyft)
+joined_df_1 <- inner_join(rd_Japan, inter_Japan_new, by = c("Disease_Category", "Year", "Country"))
+colnames(joined_df_1) <- c("Disease_Category","Year","Country","Random_predict","Actual_mean_mortality")
+head(joined_df_1)
+```
+
+```{r}
+joined_df_2 <- inner_join(btw_Japan, joined_df_1, by = c("Disease_Category", "Year", "Country"))
+colnames(joined_df_2) <- c("Disease_Category","Year","Country","Between_predict" ,"Random_predict","Actual_mean_mortality")
+head(joined_df_2)
+```
+
+```{r}
+joined_df_3 <- inner_join(fe_Japan, joined_df_2, by = c("Disease_Category", "Year", "Country"))
+colnames(joined_df_3) <- c("Disease_Category","Year","Country","Fixed_Effect_predict", "Between_predict" ,"Random_predict","Actual_mean_mortality")
+head(joined_df_3)
+```
+
+
+```{r}
+png_filename <- paste0('C:/Users/Waree/Downloads/japan_new.png')
+png(png_filename, width = 960, height = 600)
+
+joined_df_3 %>%
+  ggplot(aes(x = Year)) +
+  geom_line(aes(y = Actual_mean_mortality, color = "Actual"), linewidth = 1) +
+  geom_line(aes(y = Random_predict, color = "Random Prediction"), linetype = "dashed") +
+  geom_line(aes(y = Between_predict, color = "Between Prediction"), linetype = "dotted") +
+  geom_line(aes(y = Fixed_Effect_predict, color = "Fixed effect Prediction"), linetype = "dotted") +
+  facet_wrap(~ Disease_Category, scales = "free_y") +
+  labs(
+    title = "Comparison of Mortality Predictions vs. Actual",
+    subtitle = "Data for Japan",
+    x = "Year",
+    y = "Mean Mortality Rate",
+    color = "Legend"
+  ) +
+  theme_minimal()
+```
+
+
+
+```{r}
+rd_Japan %>% ggplot(aes(x = Year, y = data)) + 
+  geom_line()+ 
+  geom_point()+
+  facet_wrap(~ Disease_Category, scales = "free_y")+ 
+  labs(title = "Mean Mortality in Japan Mean Mortality Rate",x = "Year",
+    y = "Mean Mortality Rate")
+
+```
+```{r}
+btw_Japan %>% ggplot(aes(x = Year, y = data)) + 
+  geom_line()+ 
+  geom_point()+
+  facet_wrap(~ Disease_Category, scales = "free_y")+ 
+  labs(title = "Mean Mortality in Japan Mean Mortality Rate",x = "Year",
+    y = "Mean Mortality Rate")
+```
+```{r}
+inter_test.p %>%
+  filter(Country == 'Japan') %>%
+  ggplot(aes(x = Year, y = mean_mortality, group = Disease_Category)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ Disease_Category, scales = "free_y") +
+  labs(title = "Mean Mortality in Japan Mean Mortality Rate",
+       x = "Year",
+       y = "Mean Mortality Rate")
+```
+
+
+
+
